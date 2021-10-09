@@ -9,8 +9,9 @@
 const char compileDate[] = __DATE__ " " __TIME__;
 
 // List of Service and Characteristic UUIDs
-#define SERVICE_UUID  "0000aaaa-ead2-11e7-80c1-9a214cf093ae"
-#define WIFI_UUID     "00005555-ead2-11e7-80c1-9a214cf093ae"
+#define SERVICE_UUID "0000aaaa-ead2-11e7-80c1-9a214cf093ae"
+#define WIFI_UUID "00005555-ead2-11e7-80c1-9a214cf093ae"
+#define SCAN_WIFI_UUID "00006666-ead2-11e7-80c1-9a214cf093ae"
 
 /** Document for JSON string */
 // MAx size is 51 bytes for frame: 
@@ -84,91 +85,29 @@ class MyCallbackHandler: public BLECharacteristicCallbacks {
         String method = jsonDocument["method"].as<String>();
         JsonArray params = jsonDocument["params"].as<JsonArray>();
         handleMethod(method, params);
-      } else if (jsonDocument.containsKey("ssidPrim") &&
-          jsonDocument.containsKey("pwPrim") && 
-          jsonDocument.containsKey("ssidSec") &&
-          jsonDocument.containsKey("pwSec")) {
-//        ssidPrim = jsonDocument["ssidPrim"].as<String>();
-//        pwPrim = jsonDocument["pwPrim"].as<String>();
-//        ssidSec = jsonDocument["ssidSec"].as<String>();
-//        pwSec = jsonDocument["pwSec"].as<String>();
+      }
+    }
+    jsonDocument.clear();
+  };
 
-//        Preferences preferences;
-//        preferences.begin("WiFiCred", false);
-//        preferences.putString("ssidPrim", ssidPrim);
-//        preferences.putString("ssidSec", ssidSec);
-//        preferences.putString("pwPrim", pwPrim);
-//        preferences.putString("pwSec", pwSec);
-//        preferences.putBool("valid", true);
-//        preferences.end();
-
-      } else if (jsonDocument.containsKey("erase")) {
+    void handleMethod(String method, JsonArray params) {
+      if (method == "setup") {
+        String ssid = params[0].as<String>();
+        String password = params[1].as<String>();
+        handleSetup(ssid, password);
+      } else if (method == "erase") {
         Serial.println("Received erase command");
         
         Preferences preferences;
         preferences.begin("WiFiCred", false);
         preferences.clear();
         preferences.end();
-
-//        int err;
-//        err=nvs_flash_init();
-//        Serial.println("nvs_flash_init: " + err);
-//        err=nvs_flash_erase();
-//        Serial.println("nvs_flash_erase: " + err);
-      } else if (jsonDocument.containsKey("reset")) {
+      } else if (method == "reset") {
+        Serial.println("Received reset command");
         WiFi.disconnect();
-        esp_restart();
+        esp_restart();      
       }
     }
-    jsonDocument.clear();
-  };
-
-  void handleMethod(String method, JsonArray params) {
-    if (method == "scanWIFI") {
-      handleScanWIFI();
-    } else if (method == "setup") {
-      String ssid = params[0].as<String>();
-      String password = params[1].as<String>();
-      handleSetup(ssid, password);
-    }
-  }
-  
-  void handleScanWIFI() {
-      Vector<WIFIAPNetwork> *networks = scanWiFi();
-
-      Serial.println("Returned " + String(networks->size()) + " networks");
-
-      for (int i = 0; i < networks->size(); i++) {  
-        WIFIAPNetwork val = networks->at(i);
-        Serial << val.ssid << endl;
-      }
-
-      String output = "[";
-      for (int i = 0; i < networks->size() && output.length() < 450; i++) {
-        WIFIAPNetwork item = networks->at(i);
-        
-        if (output != "[") output += ',';
-        output += "{\"s\":\"";
-        output += item.ssid;
-        output += "\",\"r\":";
-        output += String(item.rssi);
-        output += ",\"e\":";
-        output += String(item.isEncrypted);
-        output += "}";
-
-        Serial << i << ": " << item.ssid << endl;
-      }      
-      output += "]";
-      
-      Serial.println("Res " + output);
-
-      pCharacteristicWiFi->setValue((uint8_t*)&output[0], output.length());
-      pCharacteristicWiFi->notify();
-
-      // remove array
-      delete[] &*networks->begin();
-      delete networks;
-  }
   
     void handleSetup(String ssid, String password) {
         bool connected = connectToWIFI(ssid.c_str(), password.c_str());
@@ -193,58 +132,79 @@ class MyCallbackHandler: public BLECharacteristicCallbacks {
         Serial.println("Device configuration stored successfully");
     }
 
-  Vector<WIFIAPNetwork>* scanWiFi() {
-    Serial.println("Start scanning for networks");
+  	void onRead(BLECharacteristic *pCharacteristic) {
+  		  Serial.println("BLE onRead request");
+        String output = "";
+  		  pCharacteristic->setValue((uint8_t*)&output[0], output.length());
+  	}
 
-    WiFi.disconnect(true);
-    WiFi.enableSTA(true);
-    WiFi.mode(WIFI_STA);
+};
 
-    // Scan for AP
-    int apNum = WiFi.scanNetworks(false,true,false,1000);
-    Serial.println("Found " + String(apNum) + " networks");
-    if (apNum == 0) {
-      Serial.println("Found no networks?????");
-      return false;
+/**
+* ScanWIFICallbackHandler
+* Callbacks for BLE client read requests
+*/
+class ScanWIFICallbackHandler: public BLECharacteristicCallbacks {
+  	void onRead(BLECharacteristic *pCharacteristic) {
+  		  Serial.println("BLE ScanWIFI onRead request");
+  
+        Vector<WIFIAPNetwork> *networks = scanWiFi();
+  
+        Serial.println("Returned " + String(networks->size()) + " networks");
+  
+        for (int i = 0; i < networks->size(); i++) {  
+          WIFIAPNetwork val = networks->at(i);
+          Serial << val.ssid << endl;
+        }
+  
+        String output = "[";
+        for (int i = 0; i < networks->size() && output.length() < 450; i++) {
+          WIFIAPNetwork item = networks->at(i);
+          
+          if (output != "[") output += ',';
+          output += "{\"s\":\"";
+          output += item.ssid;
+          output += "\",\"r\":";
+          output += String(item.rssi);
+          output += ",\"e\":";
+          output += String(item.isEncrypted);
+          output += "}";
+  
+          Serial << i << ": " << item.ssid << endl;
+        }      
+        output += "]";
+        
+        Serial.println("Res " + output);
+     
+  		pCharacteristic->setValue((uint8_t*)&output[0], output.length());
+  	}
+
+    Vector<WIFIAPNetwork>* scanWiFi() {
+      Serial.println("Start scanning for networks");
+  
+      WiFi.disconnect(true);
+      WiFi.enableSTA(true);
+      WiFi.mode(WIFI_STA);
+  
+      // Scan for AP
+      int apNum = WiFi.scanNetworks(false,true,false,1000);
+      Serial.println("Found " + String(apNum) + " networks");
+      if (apNum == 0) {
+        Serial.println("Found no networks?????");
+        return false;
+      }
+  
+      WIFIAPNetwork *networks_array = new WIFIAPNetwork[20];
+      Vector<WIFIAPNetwork> *networks = new Vector<WIFIAPNetwork>();
+      networks->setStorage(networks_array, 20, 0);
+      
+      for (int i = 0; i < apNum; i++) {
+        bool isEncrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+        networks->push_back({ WiFi.SSID(i), WiFi.RSSI(i), isEncrypted });
+      }
+  
+      return networks;
     }
-
-    WIFIAPNetwork *networks_array = new WIFIAPNetwork[20];
-    Vector<WIFIAPNetwork> *networks = new Vector<WIFIAPNetwork>();
-    networks->setStorage(networks_array, 20, 0);
-    
-    for (int i = 0; i < apNum; i++) {
-      bool isEncrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
-      networks->push_back({ WiFi.SSID(i), WiFi.RSSI(i), isEncrypted });
-    }
-
-    return networks;
-  }
-
-	void onRead(BLECharacteristic *pCharacteristic) {
-		Serial.println("BLE onRead request");
-		String wifiCredentials;
-
-		/** Json object for outgoing data */
-		// JsonObject& jsonOut = jsonDocument.createObject();
-		// jsonDocument["ssidPrim"] = ssidPrim;
-		// jsonDocument["pwPrim"] = pwPrim;
-		// jsonDocument["ssidSec"] = ssidSec;
-		// jsonDocument["pwSec"] = pwSec;
-		// Convert JSON object into a string
-		// jsonOut.printTo(wifiCredentials);
-		// serializeJson(jsonDocument, wifiCredentials);
-
-		// encode the data
-		int keyIndex = 0;
-		Serial.println("Stored settings: " + wifiCredentials);
-		for (int index = 0; index < wifiCredentials.length(); index ++) {
-			wifiCredentials[index] = (char) wifiCredentials[index] ^ (char) apName[keyIndex];
-			keyIndex++;
-			if (keyIndex >= strlen(apName)) keyIndex = 0;
-		}
-		pCharacteristic->setValue((uint8_t*)&wifiCredentials[0],wifiCredentials.length());
-		// jsonDocument.clear();
-	}
 };
 
 WiFiSetup::WiFiSetup(char *apName) {
@@ -275,6 +235,13 @@ void WiFiSetup::_initBLE() {
 		BLECharacteristic::PROPERTY_WRITE
 	);
 	WiFiSetup::_pCharacteristicWiFi->setCallbacks(new MyCallbackHandler(WiFiSetup::_apName, WiFiSetup::_pCharacteristicWiFi));
+
+  _pCharacteristicScanWiFI = _pService->createCharacteristic(
+		BLEUUID(SCAN_WIFI_UUID),
+		// SCAN_WIFI_UUID,
+		BLECharacteristic::PROPERTY_READ
+	);
+	WiFiSetup::_pCharacteristicScanWiFI->setCallbacks(new ScanWIFICallbackHandler());
 
 	// Start the service
 	WiFiSetup::_pService->start();

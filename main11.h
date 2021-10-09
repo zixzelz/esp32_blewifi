@@ -30,6 +30,7 @@ class WiFiSetup {
 
         /** Characteristic for digital output */
         BLECharacteristic *_pCharacteristicWiFi;
+        BLECharacteristic *_pCharacteristicScanWiFI;
         /** BLE Advertiser */
         BLEAdvertising *_pAdvertising;
         /** BLE Service */

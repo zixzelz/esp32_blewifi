@@ -1,5 +1,5 @@
 
-#include "main11.h"
+#include "WiFiSetupManager.h"
 #include "ConnectionManager.h"
 
 #include <Streaming.h>
@@ -61,40 +61,41 @@ class MyCallbackHandler: public BLECharacteristicCallbacks {
 
   public:
   
-  MyCallbackHandler(char *_apName, BLECharacteristic *_pCharacteristicWiFi) : BLECharacteristicCallbacks() {
-    apName = _apName;
-    pCharacteristicWiFi = _pCharacteristicWiFi;
-  }
-
-	void onWrite(BLECharacteristic *pCharacteristic) {
-    std::string value = pCharacteristic->getValue();
-    if (value.length() == 0) {
-      return;
+    MyCallbackHandler(char *_apName, BLECharacteristic *_pCharacteristicWiFi) : BLECharacteristicCallbacks() {
+      apName = _apName;
+      pCharacteristicWiFi = _pCharacteristicWiFi;
     }
-    Serial.println("Received over BLE: " + String((char *)&value[0]));
-
-    /** Json object for incoming data */
-    auto error = deserializeJson(jsonDocument, (char *)&value[0]);
-    //JsonObject& jsonIn = jsonBuffer.parseObject((char *)&value[0]);
-
-    if (error) {
-      Serial.println("Received invalid JSON");
-      Serial.println(error.c_str());
-    } else {
-      if (jsonDocument.containsKey("method")) {
-        String method = jsonDocument["method"].as<String>();
-        JsonArray params = jsonDocument["params"].as<JsonArray>();
-        handleMethod(method, params);
+  
+  	void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string value = pCharacteristic->getValue();
+      if (value.length() == 0) {
+        return;
       }
-    }
-    jsonDocument.clear();
-  };
+      Serial.println("Received over BLE: " + String((char *)&value[0]));
+  
+      /** Json object for incoming data */
+      auto error = deserializeJson(jsonDocument, (char *)&value[0]);
+      //JsonObject& jsonIn = jsonBuffer.parseObject((char *)&value[0]);
+  
+      if (error) {
+        Serial.println("Received invalid JSON");
+        Serial.println(error.c_str());
+      } else {
+        if (jsonDocument.containsKey("method")) {
+          String method = jsonDocument["method"].as<String>();
+          JsonObject params = jsonDocument["params"].as<JsonObject>();
+          handleMethod(method, params);
+        }
+      }
+      jsonDocument.clear();
+    };
 
-    void handleMethod(String method, JsonArray params) {
+    void handleMethod(String method, JsonObject params) {
       if (method == "setup") {
-        String ssid = params[0].as<String>();
-        String password = params[1].as<String>();
-        handleSetup(ssid, password);
+        String name = params["n"].as<String>();
+        String ssid = params["s"].as<String>();
+        String password = params["p"].as<String>();
+        handleSetup(name, ssid, password);
       } else if (method == "erase") {
         Serial.println("Received erase command");
         
@@ -109,22 +110,29 @@ class MyCallbackHandler: public BLECharacteristicCallbacks {
       }
     }
   
-    void handleSetup(String ssid, String password) {
+    void handleSetup(String name, String ssid, String password) {
+        Serial.println("handleSetup");
+        
         bool connected = connectToWIFI(ssid.c_str(), password.c_str());
         if (connected) {
-            storeDeviceConfiguration(ssid, password);
+            storeDeviceConfiguration(name, ssid, password);
         }
 
         String output = connected ? "{\"success\":1}" : "{\"success\":0}";
         pCharacteristicWiFi->setValue((uint8_t*)&output[0], output.length());
         pCharacteristicWiFi->notify();
+
+        Serial.println("Restart");
+        delay(100);
+        esp_restart();
     }
 
-    void storeDeviceConfiguration(String ssid, String password) {
+    void storeDeviceConfiguration(String name, String ssid, String password) {
         Serial.println("Storing Device Configuration");
     
         Preferences preferences;
         preferences.begin("WiFiCred", false);
+        preferences.putString("name", name);
         preferences.putString("ssid", ssid);
         preferences.putString("pw", password);
         preferences.end();
@@ -207,8 +215,8 @@ class ScanWIFICallbackHandler: public BLECharacteristicCallbacks {
     }
 };
 
-WiFiSetup::WiFiSetup(char *apName) {
-  WiFiSetup::_apName = apName;
+WiFiSetupManager::WiFiSetupManager(char *apName) {
+  WiFiSetupManager::_apName = apName;
 }
 
 /**
@@ -216,49 +224,50 @@ WiFiSetup::WiFiSetup(char *apName) {
 * Initialize BLE service and characteristic
 * Start BLE server and service advertising
 */
-void WiFiSetup::_initBLE() {
+void WiFiSetupManager::_initBLE() {
 	// Initialize BLE and set output power
-	BLEDevice::init(WiFiSetup::_apName);
+	BLEDevice::init(WiFiSetupManager::_apName);
 	BLEDevice::setPower(ESP_PWR_LVL_P7);
 
 	// Create BLE Server
-	WiFiSetup::_pServer = BLEDevice::createServer();
+	WiFiSetupManager::_pServer = BLEDevice::createServer();
 
 	// Create BLE Service
-	WiFiSetup::_pService = WiFiSetup::_pServer->createService(BLEUUID(SERVICE_UUID),20);
+	WiFiSetupManager::_pService = WiFiSetupManager::_pServer->createService(BLEUUID(SERVICE_UUID),20);
 
 	// Create BLE Characteristic for WiFi settings
-	WiFiSetup::_pCharacteristicWiFi = WiFiSetup::_pService->createCharacteristic(
+	WiFiSetupManager::_pCharacteristicWiFi = WiFiSetupManager::_pService->createCharacteristic(
 		BLEUUID(WIFI_UUID),
 		// WIFI_UUID,
 		BLECharacteristic::PROPERTY_READ |
 		BLECharacteristic::PROPERTY_WRITE
 	);
-	WiFiSetup::_pCharacteristicWiFi->setCallbacks(new MyCallbackHandler(WiFiSetup::_apName, WiFiSetup::_pCharacteristicWiFi));
+	WiFiSetupManager::_pCharacteristicWiFi->setCallbacks(new MyCallbackHandler(WiFiSetupManager::_apName, WiFiSetupManager::_pCharacteristicWiFi));
 
   _pCharacteristicScanWiFI = _pService->createCharacteristic(
 		BLEUUID(SCAN_WIFI_UUID),
 		// SCAN_WIFI_UUID,
 		BLECharacteristic::PROPERTY_READ
 	);
-	WiFiSetup::_pCharacteristicScanWiFI->setCallbacks(new ScanWIFICallbackHandler());
+	WiFiSetupManager::_pCharacteristicScanWiFI->setCallbacks(new ScanWIFICallbackHandler());
 
 	// Start the service
-	WiFiSetup::_pService->start();
+	WiFiSetupManager::_pService->start();
 
 	// Start advertising
-	WiFiSetup::_pAdvertising = WiFiSetup::_pServer->getAdvertising();
-	WiFiSetup::_pAdvertising->start();
+	WiFiSetupManager::_pAdvertising = WiFiSetupManager::_pServer->getAdvertising();
+	WiFiSetupManager::_pAdvertising->start();
 
 	// Set server callbacks
-	WiFiSetup::_pServer->setCallbacks(new MyServerCallbacks(WiFiSetup::_pAdvertising));
+	WiFiSetupManager::_pServer->setCallbacks(new MyServerCallbacks(WiFiSetupManager::_pAdvertising));
 }
 
-void WiFiSetup::setup() {
+void WiFiSetupManager::setup() {
   // Start BLE server
-  WiFiSetup::_initBLE();
+  Serial.println("Start BLE server");
+  WiFiSetupManager::_initBLE();
 }
 
-void WiFiSetup::loop() {
+void WiFiSetupManager::loop() {
 
 }

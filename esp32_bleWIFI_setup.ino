@@ -4,7 +4,8 @@
 #include <nvs.h>
 #include <nvs_flash.h>
 
-#include "main11.h"
+#include "WiFiSetupManager.h"
+#include "ConnectionManager.h"
 
 #include <Streaming.h>
 #include <Vector.h>
@@ -21,6 +22,8 @@
 #include <BLEDevice.h>
 #include <BLEAdvertising.h>
 #include <Preferences.h>
+
+#define LOG_D(fmt, ...) printf_P(PSTR(fmt "\n"), ##__VA_ARGS__);
 
 /** Build time */
 const char compileDate[] = __DATE__ " " __TIME__;
@@ -51,7 +54,7 @@ void createName() {
 //  connStatusChanged = true;
 //}
 
-WiFiSetup *wifiSetup = new WiFiSetup(apName);
+WiFiSetupManager *wifiSetupManager = new WiFiSetupManager(apName);
 
 void setup() {
   // Initialize Serial port
@@ -60,13 +63,44 @@ void setup() {
   Serial.print("Build: ");
   Serial.println(compileDate);
 
-  createName();
-  
-  wifiSetup->setup();
+  Serial.println("Load config data");
+
+  Preferences preferences;
+  preferences.begin("WiFiCred", false);
+  String ssid = preferences.getString("ssid", "");
+  String password = preferences.getString("pw", "");
+  String name = preferences.getString("name", "");
+  preferences.end();
+
+  if (name == "" || ssid == "" || password == ""){
+    Serial.println("No config saved");
+    startWiFiSetupManager();
+  } else {
+    name.toCharArray(apName, 18);
+    bool connected = connectToWIFI(ssid.c_str(), password.c_str());
+
+    if (connected) {
+      
+    } else {
+        startWiFiSetupManager();
+    }
+  }
 }
 
-void loop() {
+void startWiFiSetupManager() {
+    createName();
+    wifiSetupManager->setup();
+}
 
+static uint32_t next_heap_millis = 0;
+void loop() {
+  const uint32_t t = millis();
+  if (t > next_heap_millis) {
+    // show heap info every 5 seconds
+    next_heap_millis = t + 5 * 1000;
+    LOG_D("Free heap: %d", ESP.getFreeHeap());
+    // LOG_D("Free heap: %d, HomeKit clients: %d", ESP.getFreeHeap(), arduino_homekit_connected_clients_count());
+  }
 }
 
 //Sketch uses 1337658 bytes (68%) of program storage space. Maximum is 1966080 bytes.

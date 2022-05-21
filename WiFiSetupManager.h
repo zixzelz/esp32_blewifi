@@ -19,9 +19,9 @@
 #include <BLEAdvertising.h>
 #include <Preferences.h>
 
-class WiFiSetup {
+class WiFiSetupManager {
     public:
-        WiFiSetup(char *apName);
+        WiFiSetupManager(char *apName);
 
         void setup();
         void loop();
